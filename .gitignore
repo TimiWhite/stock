@@ -1,0 +1,9 @@
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# Local runtime cache
+data/cache/
+
+# Generated screening outputs
+data/output/
