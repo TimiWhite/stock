@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stock Source Manager"
+  short_description: "Manage AI stock-picking source registries safely"
+  default_prompt: "Add, update, and delete stock sources in JSON registry with preview-before-apply workflow."

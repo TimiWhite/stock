@@ -1,0 +1,4 @@
+interface:
+  display_name: "A股试盘线选股"
+  short_description: "按试盘线规则筛选A股并给出交易计划"
+  default_prompt: "基于试盘线战法筛选A股候选标的，输出生命线、买点确认、止损止盈和风险提示。"

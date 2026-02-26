@@ -1,0 +1,59 @@
+{
+  "run_at": "2026-02-26 22:02:46",
+  "params": {
+    "start_date": "20240101",
+    "end_date": "20260226",
+    "adjust": "qfq",
+    "max_stocks": 8,
+    "top_by_turnover": false,
+    "min_interval": 1.2,
+    "jitter": 0.6,
+    "retries": 2,
+    "backoff_base": 2.0,
+    "request_timeout": 15.0,
+    "cache_ttl_hours": 1.0,
+    "hist_source": "sina"
+  },
+  "summary": {
+    "universe_size": 8,
+    "loose_count": 2,
+    "strict_count": 0,
+    "failed_fetch_count": 0
+  },
+  "loose_candidates": [
+    {
+      "code": "000007",
+      "name": "全新好",
+      "board": "主板",
+      "shipan_date": "2025-10-29",
+      "life_line": 7.99,
+      "breakout_date": "2025-10-30",
+      "close_price": 13.16,
+      "stop_loss_pct": 4.0,
+      "stop_loss_price": 7.67,
+      "weak_after_breakout": true,
+      "volume_ratio": 4.3,
+      "consolidation_ratio": 0.1852,
+      "low_pos_ratio": 0.9456,
+      "is_strict": false
+    },
+    {
+      "code": "000002",
+      "name": "万  科Ａ",
+      "board": "主板",
+      "shipan_date": "2025-08-25",
+      "life_line": 7.16,
+      "breakout_date": null,
+      "close_price": 4.82,
+      "stop_loss_pct": 4.0,
+      "stop_loss_price": 6.874,
+      "weak_after_breakout": true,
+      "volume_ratio": 6.06,
+      "consolidation_ratio": 0.1079,
+      "low_pos_ratio": 0.8995,
+      "is_strict": false
+    }
+  ],
+  "strict_candidates": [],
+  "failed_symbols": []
+}

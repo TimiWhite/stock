@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "cninfo-filings",
+      "name": "巨潮资讯 (公告/财报)",
+      "url": "http://www.cninfo.com.cn/new/index",
+      "type": "filing",
+      "enabled": true
+    },
+    {
+      "id": "sse-announcements",
+      "name": "上交所公告披露",
+      "url": "http://www.sse.com.cn/disclosure/listedinfo/announcement/",
+      "type": "filing",
+      "enabled": true
+    },
+    {
+      "id": "szse-announcements",
+      "name": "深交所公告披露",
+      "url": "http://www.szse.cn/disclosure/listed/notice/",
+      "type": "filing",
+      "enabled": true
+    },
+    {
+      "id": "eastmoney-a-share",
+      "name": "东方财富 A股行情中心",
+      "url": "https://quote.eastmoney.com/center/gridlist.html#hs_a_board",
+      "type": "custom",
+      "enabled": true
+    },
+    {
+      "id": "sina-a-share",
+      "name": "新浪财经 A股频道",
+      "url": "https://finance.sina.com.cn/stock/",
+      "type": "news",
+      "enabled": true
+    },
+    {
+      "id": "eastmoney-research",
+      "name": "东方财富研报中心",
+      "url": "https://data.eastmoney.com/report/",
+      "type": "research",
+      "enabled": true
+    },
+    {
+      "id": "csindex-data",
+      "name": "中证指数公司",
+      "url": "https://www.csindex.com.cn/",
+      "type": "macro",
+      "enabled": true
+    },
+    {
+      "id": "national-bureau-stats",
+      "name": "国家统计局",
+      "url": "https://www.stats.gov.cn/",
+      "type": "macro",
+      "enabled": true
+    }
+  ]
+}
