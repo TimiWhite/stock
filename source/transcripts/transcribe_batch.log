@@ -1,0 +1,19 @@
+== batch start 2026-02-26 22:46:02 ==
+skip 01.mp4 size=32773
+skip 02.mp4 size=32847
+skip 03.mp4 size=32793
+start 04.mp4
+done 04.mp4 segments=674 elapsed=133.0 size=31413
+start 05.mp4
+done 05.mp4 segments=677 elapsed=125.1 size=34101
+start 06.mp4
+done 06.mp4 segments=607 elapsed=118.4 size=31534
+start 07.mp4
+done 07.mp4 segments=691 elapsed=124.3 size=34627
+start 08.mp4
+done 08.mp4 segments=678 elapsed=128.2 size=34621
+start 09.mp4
+done 09.mp4 segments=599 elapsed=112.0 size=30668
+start 10.mp4
+done 10.mp4 segments=811 elapsed=136.7 size=39964
+all_done

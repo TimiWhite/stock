@@ -9,6 +9,7 @@ import json
 import math
 import random
 import re
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
@@ -49,6 +50,18 @@ class Candidate:
     volume_ratio: float
     consolidation_ratio: float
     low_pos_ratio: float
+    breakout_vol_ratio: float
+    pressure_level: float
+    hold_above_pressure_3d: bool
+    retest_shrink_ok: bool
+    macd_bullish: bool
+    macd_above_zero: bool
+    macd_recent_golden_cross: bool
+    volume_pile_count: int
+    low_volume_base_days: int
+    low_volume_base_ok: bool
+    shipan_strict_base: bool
+    strict_score: int
     is_strict: bool
 
 
@@ -150,6 +163,110 @@ def normalize_hist(df: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
+def _count_true_clusters(flags: pd.Series) -> int:
+    count = 0
+    in_cluster = False
+    for val in flags.fillna(False).astype(bool).tolist():
+        if val and not in_cluster:
+            count += 1
+            in_cluster = True
+        elif not val:
+            in_cluster = False
+    return count
+
+
+def _longest_true_streak(flags: pd.Series) -> int:
+    longest = 0
+    current = 0
+    for val in flags.fillna(False).astype(bool).tolist():
+        if val:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
+
+def _calc_macd(df: pd.DataFrame) -> pd.DataFrame:
+    macd_df = df.copy()
+    close = macd_df["收盘"].astype(float)
+    dif = close.ewm(span=12, adjust=False).mean() - close.ewm(span=26, adjust=False).mean()
+    dea = dif.ewm(span=9, adjust=False).mean()
+    macd_df["DIF"] = dif
+    macd_df["DEA"] = dea
+    macd_df["MACD_HIST"] = dif - dea
+    return macd_df
+
+
+def _calc_video_features(
+    df: pd.DataFrame,
+    shipan_idx: int,
+    breakout_idx: int | None,
+    pressure_level: float,
+) -> dict:
+    hist = _calc_macd(df)
+    window_start = max(0, shipan_idx - 120)
+    window = hist.iloc[window_start : shipan_idx + 1].copy()
+    vol_ma20 = window["成交量"].rolling(20, min_periods=5).mean()
+    pile_flag = (window["成交量"] >= vol_ma20 * 1.8) & (window["收盘"] <= window["最高"].rolling(120, min_periods=20).max() * 0.8)
+    volume_pile_count = _count_true_clusters(pile_flag)
+
+    vol_ma60 = window["成交量"].rolling(60, min_periods=20).mean()
+    low_volume_flag = window["成交量"] <= vol_ma60 * 0.6
+    low_volume_base_days = _longest_true_streak(low_volume_flag)
+    low_volume_base_ok = low_volume_base_days >= 55
+
+    if breakout_idx is None or breakout_idx <= 0:
+        return {
+            "breakout_vol_ratio": 0.0,
+            "hold_above_pressure_3d": False,
+            "retest_shrink_ok": False,
+            "macd_bullish": False,
+            "macd_above_zero": False,
+            "macd_recent_golden_cross": False,
+            "volume_pile_count": int(volume_pile_count),
+            "low_volume_base_days": int(low_volume_base_days),
+            "low_volume_base_ok": bool(low_volume_base_ok),
+        }
+
+    pre20 = hist.iloc[max(0, breakout_idx - 20) : breakout_idx]
+    pre20_avg_vol = float(pre20["成交量"].mean()) if not pre20.empty else 0.0
+    breakout_vol = float(hist.at[breakout_idx, "成交量"])
+    breakout_vol_ratio = breakout_vol / pre20_avg_vol if pre20_avg_vol > 0 else 0.0
+
+    hold_window = hist.iloc[breakout_idx : min(len(hist), breakout_idx + 3)]
+    hold_above_pressure_3d = len(hold_window) >= 3 and bool((hold_window["收盘"] > pressure_level).all())
+
+    post5 = hist.iloc[breakout_idx : min(len(hist), breakout_idx + 5)]["成交量"].astype(float)
+    if len(post5) >= 3 and pre20_avg_vol > 0:
+        shrink_flag = post5.iloc[-1] < post5.iloc[0]
+        not_too_sharp = float(post5.min()) >= pre20_avg_vol * 0.4
+        retest_shrink_ok = bool(shrink_flag and not_too_sharp)
+    else:
+        retest_shrink_ok = False
+
+    dif = hist["DIF"]
+    dea = hist["DEA"]
+    macd_bullish = bool(dif.iloc[breakout_idx] > dea.iloc[breakout_idx])
+    macd_above_zero = bool(dif.iloc[breakout_idx] > 0 and dea.iloc[breakout_idx] > 0)
+    cross_window_start = max(1, breakout_idx - 8)
+    prev_diff = (dif - dea).iloc[cross_window_start - 1 : breakout_idx]
+    curr_diff = (dif - dea).iloc[cross_window_start: breakout_idx + 1]
+    macd_recent_golden_cross = bool(((prev_diff <= 0).values & (curr_diff > 0).values).any())
+
+    return {
+        "breakout_vol_ratio": round(float(breakout_vol_ratio), 3),
+        "hold_above_pressure_3d": hold_above_pressure_3d,
+        "retest_shrink_ok": retest_shrink_ok,
+        "macd_bullish": macd_bullish,
+        "macd_above_zero": macd_above_zero,
+        "macd_recent_golden_cross": macd_recent_golden_cross,
+        "volume_pile_count": int(volume_pile_count),
+        "low_volume_base_days": int(low_volume_base_days),
+        "low_volume_base_ok": bool(low_volume_base_ok),
+    }
+
+
 def find_latest_loose_signal(df: pd.DataFrame) -> dict | None:
     if len(df) < 70:
         return None
@@ -207,6 +324,7 @@ def find_latest_loose_signal(df: pd.DataFrame) -> dict | None:
             "idx": i,
             "shipan_date": df.at[i, "日期"].strftime("%Y-%m-%d"),
             "life_line": close_price,
+            "pressure_level": pre_high,
             "vol_ratio": vol_ratio,
             "consolidation_ratio": consolidation_ratio,
             "low_pos_ratio": low_pos_ratio,
@@ -350,6 +468,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--request-timeout", type=float, default=20.0, help="Timeout seconds for each request call.")
     parser.add_argument("--cache-ttl-hours", type=float, default=12.0, help="Cache TTL in hours.")
     parser.add_argument("--cache-dir", default="data/cache/akshare_hist", help="Local cache directory.")
+    parser.add_argument("--log-every", type=int, default=100, help="Print progress log every N stocks.")
     parser.add_argument(
         "--hist-source",
         default="sina",
@@ -397,68 +516,144 @@ def run_screening(args: argparse.Namespace) -> dict:
     )
     universe = build_universe(fetcher, args.max_stocks, args.top_by_turnover)
     cache_dir = Path(args.cache_dir)
+    total = int(len(universe))
+    started_at = time.monotonic()
+
+    def log_progress(message: str) -> None:
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] {message}", file=sys.stderr, flush=True)
 
     loose_candidates: list[Candidate] = []
     failed: list[str] = []
+    strict_hits = 0
+    log_step = max(1, int(args.log_every))
 
-    for _, row in universe.iterrows():
+    log_progress(f"Start screening: universe={total}, hist_source={args.hist_source}, cache_ttl_hours={args.cache_ttl_hours}")
+
+    for idx, (_, row) in enumerate(universe.iterrows(), start=1):
         code = str(row["代码"]).zfill(6)
         name = str(row.get("名称", ""))
         board = infer_board(code)
         try:
-            raw_hist = fetch_hist_with_cache(
-                fetcher=fetcher,
-                cache_dir=cache_dir,
-                symbol=code,
-                start_date=args.start_date,
-                end_date=args.end_date,
-                adjust=args.adjust,
-                cache_ttl_hours=args.cache_ttl_hours,
-                hist_source=args.hist_source,
+            try:
+                raw_hist = fetch_hist_with_cache(
+                    fetcher=fetcher,
+                    cache_dir=cache_dir,
+                    symbol=code,
+                    start_date=args.start_date,
+                    end_date=args.end_date,
+                    adjust=args.adjust,
+                    cache_ttl_hours=args.cache_ttl_hours,
+                    hist_source=args.hist_source,
+                )
+            except Exception as exc:
+                failed.append(code)
+                log_progress(f"Fetch failed [{idx}/{total}] code={code} error={type(exc).__name__}")
+                continue
+
+            hist = normalize_hist(raw_hist)
+            if hist.empty:
+                continue
+
+            signal = find_latest_loose_signal(hist)
+            if signal is None:
+                continue
+
+            shipan_idx = int(signal["idx"])
+            life_line = float(signal["life_line"])
+            pressure_level = float(signal["pressure_level"])
+            breakout_idx = find_breakout_after_lifeline(hist, shipan_idx, life_line)
+            breakout_date = hist.at[breakout_idx, "日期"].strftime("%Y-%m-%d") if breakout_idx is not None else None
+            weak_flag = True if breakout_idx is None else is_weak_after_breakout(hist, breakout_idx, board)
+
+            video_feats = _calc_video_features(
+                df=hist,
+                shipan_idx=shipan_idx,
+                breakout_idx=breakout_idx,
+                pressure_level=pressure_level,
             )
-        except Exception:
-            failed.append(code)
-            continue
-
-        hist = normalize_hist(raw_hist)
-        if hist.empty:
-            continue
-
-        signal = find_latest_loose_signal(hist)
-        if signal is None:
-            continue
-
-        shipan_idx = int(signal["idx"])
-        life_line = float(signal["life_line"])
-        breakout_idx = find_breakout_after_lifeline(hist, shipan_idx, life_line)
-        breakout_date = hist.at[breakout_idx, "日期"].strftime("%Y-%m-%d") if breakout_idx is not None else None
-        weak_flag = True if breakout_idx is None else is_weak_after_breakout(hist, breakout_idx, board)
-        strict_ok = bool(signal["strict_base_ok"]) and breakout_idx is not None and not weak_flag
-
-        stop_loss_pct = stop_loss_pct_for_board(board)
-        close_price = float(hist.iloc[-1]["收盘"])
-        vol_ratio = float(signal["vol_ratio"])
-        consolidation_ratio = float(signal["consolidation_ratio"])
-        low_pos_ratio = float(signal["low_pos_ratio"])
-
-        loose_candidates.append(
-            Candidate(
-                code=code,
-                name=name,
-                board=board,
-                shipan_date=str(signal["shipan_date"]),
-                life_line=round(life_line, 3),
-                breakout_date=breakout_date,
-                close_price=round(close_price, 3),
-                stop_loss_pct=round(stop_loss_pct * 100, 2),
-                stop_loss_price=round(life_line * (1.0 - stop_loss_pct), 3),
-                weak_after_breakout=weak_flag,
-                volume_ratio=round(vol_ratio, 2) if not math.isnan(vol_ratio) else 0.0,
-                consolidation_ratio=round(consolidation_ratio, 4),
-                low_pos_ratio=round(low_pos_ratio, 4),
-                is_strict=strict_ok,
+            breakout_vol_ok = video_feats["breakout_vol_ratio"] >= 1.5
+            macd_support = bool(video_feats["macd_bullish"]) and (
+                bool(video_feats["macd_above_zero"]) or bool(video_feats["macd_recent_golden_cross"])
             )
-        )
+            optional_hits = sum(
+                [
+                    bool(video_feats["hold_above_pressure_3d"]),
+                    bool(video_feats["retest_shrink_ok"]),
+                    int(video_feats["volume_pile_count"]) >= 2,
+                    bool(video_feats["low_volume_base_ok"]),
+                ]
+            )
+            shipan_strict_base = bool(signal["strict_base_ok"])
+            strict_score = int(
+                optional_hits
+                + (1 if breakout_vol_ok else 0)
+                + (1 if macd_support else 0)
+                + (1 if shipan_strict_base else 0)
+            )
+            strict_ok = (
+                breakout_idx is not None
+                and not weak_flag
+                and breakout_vol_ok
+                and macd_support
+                and strict_score >= 5
+            )
+            if strict_ok:
+                strict_hits += 1
+
+            stop_loss_pct = stop_loss_pct_for_board(board)
+            close_price = float(hist.iloc[-1]["收盘"])
+            vol_ratio = float(signal["vol_ratio"])
+            consolidation_ratio = float(signal["consolidation_ratio"])
+            low_pos_ratio = float(signal["low_pos_ratio"])
+
+            loose_candidates.append(
+                Candidate(
+                    code=code,
+                    name=name,
+                    board=board,
+                    shipan_date=str(signal["shipan_date"]),
+                    life_line=round(life_line, 3),
+                    breakout_date=breakout_date,
+                    close_price=round(close_price, 3),
+                    stop_loss_pct=round(stop_loss_pct * 100, 2),
+                    stop_loss_price=round(life_line * (1.0 - stop_loss_pct), 3),
+                    weak_after_breakout=weak_flag,
+                    volume_ratio=round(vol_ratio, 2) if not math.isnan(vol_ratio) else 0.0,
+                    consolidation_ratio=round(consolidation_ratio, 4),
+                    low_pos_ratio=round(low_pos_ratio, 4),
+                    breakout_vol_ratio=float(video_feats["breakout_vol_ratio"]),
+                    pressure_level=round(pressure_level, 3),
+                    hold_above_pressure_3d=bool(video_feats["hold_above_pressure_3d"]),
+                    retest_shrink_ok=bool(video_feats["retest_shrink_ok"]),
+                    macd_bullish=bool(video_feats["macd_bullish"]),
+                    macd_above_zero=bool(video_feats["macd_above_zero"]),
+                    macd_recent_golden_cross=bool(video_feats["macd_recent_golden_cross"]),
+                    volume_pile_count=int(video_feats["volume_pile_count"]),
+                    low_volume_base_days=int(video_feats["low_volume_base_days"]),
+                    low_volume_base_ok=bool(video_feats["low_volume_base_ok"]),
+                    shipan_strict_base=shipan_strict_base,
+                    strict_score=strict_score,
+                    is_strict=strict_ok,
+                )
+            )
+        finally:
+            if idx == 1 or idx % log_step == 0 or idx == total:
+                elapsed = max(0.001, time.monotonic() - started_at)
+                rate = idx / elapsed
+                remain = max(0.0, total - idx) / rate if rate > 0 else float("inf")
+                percent = idx / total * 100 if total > 0 else 100.0
+                log_progress(
+                    "Progress "
+                    f"{idx}/{total} ({percent:.2f}%), elapsed={elapsed/60:.1f}m, eta={remain/60:.1f}m, "
+                    f"loose={len(loose_candidates)}, strict={strict_hits}, failed={len(failed)}"
+                )
+
+    total_elapsed = time.monotonic() - started_at
+    log_progress(
+        f"Screening finished: elapsed={total_elapsed/60:.1f}m, "
+        f"loose={len(loose_candidates)}, strict={strict_hits}, failed={len(failed)}"
+    )
 
     loose_candidates.sort(key=lambda x: (x.breakout_date or "", x.volume_ratio), reverse=True)
     strict_candidates = [item for item in loose_candidates if item.is_strict]
@@ -507,6 +702,18 @@ def _sheet_dataframe(candidates: list[dict]) -> pd.DataFrame:
         "volume_ratio",
         "consolidation_ratio",
         "low_pos_ratio",
+        "breakout_vol_ratio",
+        "pressure_level",
+        "hold_above_pressure_3d",
+        "retest_shrink_ok",
+        "macd_bullish",
+        "macd_above_zero",
+        "macd_recent_golden_cross",
+        "volume_pile_count",
+        "low_volume_base_days",
+        "low_volume_base_ok",
+        "shipan_strict_base",
+        "strict_score",
         "weak_after_breakout",
         "is_strict",
     ]
@@ -527,6 +734,18 @@ def _sheet_dataframe(candidates: list[dict]) -> pd.DataFrame:
         "volume_ratio": "试盘量比",
         "consolidation_ratio": "震荡振幅",
         "low_pos_ratio": "相对高位比例",
+        "breakout_vol_ratio": "突破放量比",
+        "pressure_level": "压力位",
+        "hold_above_pressure_3d": "三日站上压力",
+        "retest_shrink_ok": "回踩缩量健康",
+        "macd_bullish": "MACD多头",
+        "macd_above_zero": "MACD零轴上",
+        "macd_recent_golden_cross": "MACD近期金叉",
+        "volume_pile_count": "量堆次数",
+        "low_volume_base_days": "低量平台天数",
+        "low_volume_base_ok": "低量平台达标",
+        "shipan_strict_base": "试盘严格基础",
+        "strict_score": "严格特征分",
         "weak_after_breakout": "突破后走弱",
         "is_strict": "命中严格版",
     }

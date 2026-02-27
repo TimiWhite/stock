@@ -7,3 +7,10 @@ data/cache/
 
 # Generated screening outputs
 data/output/
+
+# Local media assets (do not push to GitHub)
+source/videos/
+
+# Python bytecode cache
+**/__pycache__/
+*.pyc
